@@ -1,78 +1,85 @@
 ﻿using System;
+using System.Configuration;
+using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+using System.Text;
 
 namespace ConsoleInstant
 {
     class Program
     {
         const string folderPath = @"C:\Projects\DiartisDC\CapturingSource\_Input";
-        const string serverPath = @"\\192.168.2.5\Projects\DiartisDC\CapturingSource\_Input";
+        const string serverPath = @"\\192.168.2.5\HuongNT";
+
+        const int LOGON32_LOGON_INTERACTIVE = 2;
+        const int LOGON32_LOGON_NETWORK = 3;
+        const int LOGON32_LOGON_BATCH = 4;
+        const int LOGON32_LOGON_SERVICE = 5;
+        const int LOGON32_LOGON_UNLOCK = 7;
+        const int LOGON32_LOGON_NETWORK_CLEARTEXT = 8;
+        const int LOGON32_LOGON_NEW_CREDENTIALS = 9;
+        const int LOGON32_PROVIDER_DEFAULT = 0;
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        public static extern int LogonUser(
+            string lpszUsername,
+            string lpszDomain,
+            string lpszPassword,
+            int dwLogonType,
+            int dwLogonProvider,
+            out IntPtr phToken
+            );
+        [DllImport("advapi32.dll", SetLastError = true)]
+        public static extern int ImpersonateLoggedOnUser(
+            IntPtr hToken
+        );
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        static extern int RevertToSelf();
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern int CloseHandle(IntPtr hObject);
+
 
         static void Main()
         {
-            using var watcher = new FileSystemWatcher(serverPath);
+            string user = ConfigurationManager.AppSettings["user"];
+            string pass = ConfigurationManager.AppSettings["password"];
+            string domain = ConfigurationManager.AppSettings["domain"];
 
-            watcher.NotifyFilter = NotifyFilters.Attributes
-                                 | NotifyFilters.CreationTime
-                                 | NotifyFilters.DirectoryName
-                                 | NotifyFilters.FileName
-                                 | NotifyFilters.LastAccess
-                                 | NotifyFilters.LastWrite
-                                 | NotifyFilters.Security
-                                 | NotifyFilters.Size;
+            var lnToken = IntPtr.Zero;
+            int TResult = LogonUser(user, domain, pass,
+                        LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT,
+                        out lnToken);
 
-            watcher.Changed += OnChanged;
-            watcher.Created += OnCreated;
-            watcher.Deleted += OnDeleted;
-            watcher.Renamed += OnRenamed;
-            watcher.Error += OnError;
+            if (TResult > 0)
+            { 
+                ImpersonateLoggedOnUser(lnToken);
 
-            watcher.Filter = "*.*";
-            watcher.IncludeSubdirectories = true;
-            watcher.EnableRaisingEvents = true;
+                new FolderObservable(serverPath);
 
-            Console.WriteLine("Press enter to exit.");
+                Process.Start(new ProcessStartInfo()
+                {
+                    FileName = serverPath,
+                    UseShellExecute = true,
+                    Verb = "open"
+                });
+
+                RevertToSelf();
+
+                Console.Write("\n" + Environment.UserName);
+
+                CloseHandle(lnToken);
+            }
+            else
+            {
+                Console.Write("\n Not logged on: " + WindowsIdentity.GetCurrent().Name);
+            }
+
+            Console.WriteLine("\n Press enter to exit.");
             Console.ReadLine();
-        }
-
-        private static void OnChanged(object sender, FileSystemEventArgs e)
-        {
-            if (e.ChangeType != WatcherChangeTypes.Changed)
-            {
-                return;
-            }
-            Console.WriteLine($"Changed: {e.FullPath}");
-        }
-
-        private static void OnCreated(object sender, FileSystemEventArgs e)
-        {
-            string value = $"Created: {e.FullPath}";
-            Console.WriteLine(value);
-        }
-
-        private static void OnDeleted(object sender, FileSystemEventArgs e) =>
-            Console.WriteLine($"Deleted: {e.FullPath}");
-
-        private static void OnRenamed(object sender, RenamedEventArgs e)
-        {
-            Console.WriteLine($"Renamed:");
-            Console.WriteLine($"    Old: {e.OldFullPath}");
-            Console.WriteLine($"    New: {e.FullPath}");
-        }
-
-        private static void OnError(object sender, ErrorEventArgs e) =>
-            PrintException(e.GetException());
-
-        private static void PrintException(Exception? ex)
-        {
-            if (ex != null)
-            {
-                Console.WriteLine($"Message: {ex.Message}");
-                Console.WriteLine("Stacktrace:");
-                Console.WriteLine(ex.StackTrace);
-                Console.WriteLine();
-                PrintException(ex.InnerException);
-            }
         }
     }
 }
